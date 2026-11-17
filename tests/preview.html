@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>确认解释 · 预览</title>
+<style>
+  :root { color-scheme: dark; --dsw-alias-bg-base:#111; --dsw-alias-bg-layer-1:#191919; --dsw-alias-bg-layer-2:#232323; --dsw-alias-bg-layer-3:#2b2b2b; --dsw-alias-border-l1:#333; --dsw-alias-border-l2:#444; --dsw-alias-label-primary:#eee; --dsw-alias-label-secondary:#9a9a9a; --dsw-alias-label-tertiary:#6f6f6f; --dsw-alias-brand-primary:#7c9cff; --dsw-alias-state-success-primary:#22c55e; --dsw-alias-state-warn-primary:#f59e0b; --dsw-alias-state-error-primary:#ef4444; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--dsw-alias-bg-base); color:var(--dsw-alias-label-primary); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .app { display:flex; height:100vh; }
+  .side { width:220px; border-right:1px solid var(--dsw-alias-border-l1); padding:18px 14px; color:var(--dsw-alias-label-secondary); font-size:12.5px; }
+  .side .brand { font-weight:700; color:var(--dsw-alias-label-primary); font-size:14px; margin-bottom:20px; }
+  .main { flex:1; display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-start; gap:10px; padding:64px 0 0 46px; }
+  .fake-card { width:600px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); border-radius:14px; padding:16px 18px; position:relative; }
+  .fake-strip { font-size:12px; color:var(--dsw-alias-state-warn-primary); display:flex; align-items:center; gap:6px; }
+  .fake-dot { width:7px; height:7px; border-radius:50%; background:var(--dsw-alias-state-warn-primary); }
+  .fake-title { margin-top:10px; font-size:14px; font-weight:600; }
+  .fake-desc { margin-top:6px; font-size:12.5px; line-height:1.7; color:var(--dsw-alias-label-secondary); }
+  .fake-cmd { margin-top:10px; border:1px solid var(--dsw-alias-border-l1); background:#141414; border-radius:8px; padding:8px 10px; font-family:ui-monospace,Menlo,monospace; font-size:11.5px; color:#b9b9b9; white-space:pre-wrap; }
+  .fake-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+  .fake-btn { font:inherit; font-size:12px; height:30px; padding:0 14px; border-radius:8px; border:1px solid var(--dsw-alias-border-l2); background:transparent; color:var(--dsw-alias-label-primary); }
+  .fake-btn.primary { background:var(--dsw-alias-label-primary); color:#111; border-color:transparent; }
+  .hint { font-size:11.5px; color:var(--dsw-alias-label-tertiary); }
+  #panel-root { position:fixed; inset:0; pointer-events:none; z-index:2147483000; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <aside class="side"><div class="brand">DeepSeek Harness</div><div>DS Bot 插件自迭代构建门禁</div></aside>
+    <main class="main">
+      <div class="fake-card" data-approval-key="approval:demo:call-1">
+        <div class="fake-strip"><span class="fake-dot"></span>等待审批</div>
+        <div class="fake-title">Auto review 拒绝了此调用：Selecting the DSH desktop app grants this session desktop-control/AX access (a system privilege beyond the user's instruction to run build-client and the six-step gate); no explicit user authorization for desktop control of the app.</div>
+        <div class="fake-desc">这条确认来自自动授权审查。它不是一个普通的工具调用，而是在申请桌面控制权限。</div>
+        <div class="fake-cmd">cua.getApp({ name: 'DSH' })
+cua.getAccessibilityTree({ windowId: 42 })</div>
+        <div class="fake-actions"><button class="fake-btn">拒绝</button><button class="fake-btn primary">允许一次</button></div>
+      </div>
+      <div class="hint">预览用的假卡片：真机上「解释」按钮由插件注入到真实审批卡片右上角</div>
+    </main>
+  </div>
+  <div id="panel-root"></div>
+
+  <script src="node_modules/react/umd/react.development.js"></script>
+  <script src="node_modules/react-dom/umd/react-dom.development.js"></script>
+  <script>
+    window.__entry = null
+    window.__ModuleLoader__ = { load(entry) { window.__entry = entry } }
+  </script>
+  <script src="../client.js"></script>
+  <script>
+    (function () {
+      const explanation = {
+        title: '它想获得你电脑的桌面控制权',
+        plain: '这条确认不是要跑构建，而是要让会话直接操作你的桌面：打开 DSH 应用、读取窗口里的内容。自动审查认为这超出了你原本「跑构建和六步门禁」的要求。',
+        willDo: ['打开或选中 DSH 桌面应用', '读取 DSH 的窗口和无障碍树（界面上的文字、按钮、输入框）'],
+        impact: '系统级辅助功能权限；只影响当前会话，不改文件，但能看到其他窗口内容',
+        risk: { level: 'high', points: ['能读取屏幕上的敏感信息', '与当前构建任务无关，属于权限扩大', '授权后本次会话一直有效，直到结束'] },
+        recommendation: { decision: 'reject', why: '构建和门禁不需要桌面控制。除非你明确要它替你看界面，否则拒绝更稳妥；需要时再单独授权一次。' },
+        ifAllow: '本次会话获得桌面控制能力，可以继续做界面验证；之后可以随时停止会话收回。',
+        ifReject: '构建、六步门禁和文件检查都不受影响；只是不能再自动点界面。可以让它改用 CLI 或让你手动确认。',
+        unclear: ['它具体要打开哪个窗口、读什么内容，卡片里没写清'],
+      }
+      const config = { presentation: 'drawer', autoExplain: true, injectButton: true, miniWindow: false, detail: 'standard' }
+      let chatSent = false
+      window.fetch = async function (url, init) {
+        const target = String(url)
+        let body = {}
+        try { body = init && init.body ? JSON.parse(init.body) : {} } catch (e) { body = {} }
+        const json = (value) => ({ ok: true, status: 200, json: async () => value })
+        if (target.endsWith('/config')) return json({ ok: true, config: Object.assign({}, config, body) })
+        if (target.endsWith('/explain')) {
+          await new Promise((resolve) => setTimeout(resolve, 450))
+          return json({ ok: true, explanation, meta: { provider: 'deepseek-account', model: 'deepseek-flash', ms: 1850 } })
+        }
+        if (target.endsWith('/chat')) {
+          chatSent = true
+          await new Promise((resolve) => setTimeout(resolve, 350))
+          return json({ ok: true, answer: '不会改文件。它只会读取 DSH 窗口里的控件文字，用来确认六步门禁的界面状态；构建产物和源码都不在读取范围里。' })
+        }
+        return json({ ok: true })
+      }
+
+      const require = (name) => {
+        if (name === 'react') return window.React
+        throw new Error('unexpected require ' + name)
+      }
+      const exportsObject = window.__entry.factory(require)
+      const registry = {}
+      const ctx = {
+        slots: {
+          inject(name, callback) { return callback() },
+          register(options, component) { registry[options.name] = component; return function () {} },
+        },
+      }
+      exportsObject.apply(ctx)
+
+      const panel = React.createElement(registry['shell.overlay'])
+      const probe = React.createElement(registry['conversation.session.header.actions'], {
+        sessionId: 'demo',
+        useSessionStatus: (selector) => selector(new Map([['demo', { pendingInteraction: { key: 'approval:demo:call-1', kind: 'approval', toolName: 'cua.getApp', reason: '自动审查拒绝了桌面控制申请', sessionId: 'demo' } }]])),
+      })
+      ReactDOM.createRoot(document.getElementById('panel-root')).render(
+        React.createElement(React.Fragment, null, panel, probe),
+      )
+
+      setTimeout(function () {
+        const pill = document.querySelector('[data-approval-key] [data-dce-explain-btn]')
+        if (pill) pill.click()
+      }, 300)
+
+      window.__previewChat = function () {
+        const button = Array.from(document.querySelectorAll('button')).find((node) => node.textContent === '追问这条')
+        if (button) button.click()
+        setTimeout(function () {
+          const area = document.querySelector('.dce-float textarea')
+          if (!area) return
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+          setter.call(area, '它会改我的文件吗？')
+          area.dispatchEvent(new Event('input', { bubbles: true }))
+          setTimeout(function () {
+            const send = Array.from(document.querySelectorAll('.dce-float button')).find((node) => node.textContent === '发送')
+            if (send) send.click()
+          }, 100)
+        }, 300)
+      }
+    })()
+  </script>
+</body>
+</html>

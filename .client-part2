@@ -1,0 +1,378 @@
+
+    /* ---------------------------------------------------------------- */
+    /* Components                                                        */
+    /* ---------------------------------------------------------------- */
+
+    function Section(props) {
+      return h('div', { className: 'dce-sec' },
+        props.title ? h('div', { className: 'dce-sec-title' }, props.title) : null,
+        props.children)
+    }
+
+    function Segmented(props) {
+      return h('div', { className: 'dce-seg' }, props.options.map(function (option) {
+        return h('button', {
+          key: option[0],
+          type: 'button',
+          'data-on': props.value === option[0] ? '1' : '0',
+          onClick: function () { props.onChange(option[0]) },
+        }, option[1])
+      }))
+    }
+
+    function Row(props) {
+      return h('div', { className: 'dce-row' },
+        h('div', { className: 'dce-row-main' },
+          h('div', { className: 'dce-row-title' }, props.title),
+          props.hint ? h('div', { className: 'dce-row-hint' }, props.hint) : null),
+        props.children)
+    }
+
+    function RiskBadge(props) {
+      const level = props.level === 'low' || props.level === 'high' || props.level === 'unknown' ? props.level : 'medium'
+      return h('div', { className: 'dce-risk', style: { color: RISK_COLOR[level] } },
+        h('span', { className: 'dce-dot', style: { background: RISK_COLOR[level] } }),
+        RISK_LABEL[level])
+    }
+
+    function ExplanationView(props) {
+      const data = props.data
+      if (!data) return null
+      const risk = data.risk || { level: 'medium', points: [] }
+      const rec = data.recommendation || { decision: 'careful', why: '' }
+      const decision = rec.decision === 'allow' || rec.decision === 'reject' ? rec.decision : 'careful'
+      const recBackground = decision === 'allow'
+        ? 'rgba(34,197,94,.08)'
+        : decision === 'reject' ? 'rgba(239,68,68,.08)' : 'rgba(245,158,11,.08)'
+      return h(React.Fragment, null,
+        data.parseFailed
+          ? h('div', { className: 'dce-banner' }, '模型这次把 JSON 写断了，下面是原文；点底部「重新生成」会再试一次。')
+          : null,
+        data.parseFailed
+          ? h('pre', { className: 'dce-source-text', style: { maxHeight: 300 } }, data.raw || data.plain)
+          : null,
+        data.parseFailed ? null : h('div', { className: 'dce-sec' },
+          h('div', { className: 'dce-lead' }, data.title || '这条确认在问什么'),
+          data.plain ? h('div', { className: 'dce-plain', style: { marginTop: 6 } }, data.plain) : null),
+        data.willDo && data.willDo.length > 0
+          ? h(Section, { title: '它会做什么' },
+            h('ul', { className: 'dce-list' }, data.willDo.map(function (item, index) {
+              return h('li', { key: index }, item)
+            })))
+          : null,
+        data.impact ? h(Section, { title: '影响范围' }, h('div', { className: 'dce-plain' }, data.impact)) : null,
+        h(Section, { title: '风险' },
+          h(RiskBadge, { level: risk.level }),
+          risk.points && risk.points.length > 0
+            ? h('ul', { className: 'dce-list', style: { marginTop: 6 } }, risk.points.map(function (item, index) {
+              return h('li', { key: index }, item)
+            }))
+            : null),
+        h('div', {
+          className: 'dce-rec',
+          style: { borderColor: DECISION_COLOR[decision], background: recBackground },
+        },
+          h('b', { style: { color: DECISION_COLOR[decision] } }, DECISION_LABEL[decision]),
+          rec.why ? h('span', null, rec.why) : null),
+        (data.ifAllow || data.ifReject)
+          ? h('div', { className: 'dce-cols' },
+            data.ifAllow ? h(Section, { title: '如果允许' }, h('div', { className: 'dce-col' }, data.ifAllow)) : null,
+            data.ifReject ? h(Section, { title: '如果拒绝' }, h('div', { className: 'dce-col' }, data.ifReject)) : null)
+          : null,
+        data.unclear && data.unclear.length > 0
+          ? h(Section, { title: '原文没说清的' },
+            h('ul', { className: 'dce-list' }, data.unclear.map(function (item, index) {
+              return h('li', { key: index }, item)
+            })))
+          : null)
+    }
+
+    function Panel() {
+      const st = useStore()
+      const [ticks, setTicks] = React.useState(0)
+      const bodyRef = React.useRef(null)
+      const status = st.explanation.status
+
+      React.useEffect(function () {
+        if (bodyRef.current) bodyRef.current.scrollTop = 0
+      }, [st.open, st.request && st.request.key])
+
+      React.useEffect(function () {
+        if (status !== 'loading') {
+          setTicks(0)
+          return undefined
+        }
+        const timer = setInterval(function () { setTicks(function (value) { return value + 1 }) }, 500)
+        return function () { clearInterval(timer) }
+      }, [status])
+
+      React.useEffect(function () {
+        if (!st.open && !st.chat.open) return undefined
+        function onKey(event) {
+          if (event.key !== 'Escape') return
+          if (st.chat.open) closeChat()
+          else closePanel()
+        }
+        window.addEventListener('keydown', onKey)
+        return function () { window.removeEventListener('keydown', onKey) }
+      }, [st.open, st.chat.open])
+
+      const request = st.request
+      const body = []
+
+      if (st.resolved) {
+        body.push(h('div', { className: 'dce-banner', key: 'resolved' }, '这条确认已经处理过了；下面保留的是当时的解释，供回看。'))
+      }
+
+      if (!request) {
+        body.push(h('div', { className: 'dce-empty', key: 'empty' }, '还没有可解释的确认。等下一次审批或提问出现时，点卡片上的「解释」。'))
+      } else {
+        body.push(h('div', { className: 'dce-sec', key: 'request' },
+          h('div', { className: 'dce-sec-title' }, '这次确认'),
+          request.toolName ? h('div', { className: 'dce-kind', style: { display: 'inline-block', marginBottom: 6 } }, request.toolName) : null,
+          request.reason
+            ? h('div', { className: 'dce-plain' }, request.reason)
+            : h('div', { className: 'dce-empty' }, '卡片没有附加说明，主要看下面的原文。'),
+          request.cardText
+            ? h('details', { className: 'dce-source' },
+              h('summary', null, '查看卡片原文'),
+              h('pre', { className: 'dce-source-text' }, request.cardText))
+            : null))
+
+        if (status === 'loading') {
+          body.push(h('div', { className: 'dce-loading', key: 'loading' },
+            h('span', { className: 'dce-spinner' }),
+            '正在读懂这条确认' + (ticks > 0 ? '（' + Math.round(ticks / 2) + ' 秒）' : '…')))
+        } else if (status === 'error') {
+          body.push(h('div', { className: 'dce-error', key: 'error' },
+            h('div', null, '没能生成解释：' + (st.explanation.error || '未知错误')),
+            h('div', null,
+              h('button', { className: 'dce-btn', onClick: function () { runExplain() } }, '再试一次'))))
+        } else if (status === 'ready') {
+          body.push(h(ExplanationView, { key: 'explanation', data: st.explanation.data }))
+        } else {
+          body.push(h('div', { className: 'dce-empty', key: 'idle' },
+            '自动解释已关闭。点下面的按钮，让模型把这张卡片翻译成大白话。',
+            h('div', { style: { marginTop: 10 } },
+              h('button', { className: 'dce-btn dce-btn-primary', onClick: function () { runExplain() } }, '生成解释'))))
+        }
+      }
+
+      const panel = h('div', { className: 'dce-panel' },
+        h('div', { className: 'dce-head' },
+          h('span', { style: { color: T.brand, fontSize: 13, lineHeight: 1 } }, '✦'),
+          h('div', { className: 'dce-title' }, '这条确认在问什么'),
+          request ? h('span', { className: 'dce-kind' }, KIND_LABEL[request.kind] || '确认') : null,
+          h('div', { className: 'dce-spacer' }),
+          h('button', {
+            className: 'dce-icon-btn', type: 'button', title: '在小窗里追问', 'aria-label': '在小窗里追问',
+            onClick: openChat, disabled: !request,
+          }, '💬'),
+          h('button', { className: 'dce-icon-btn', type: 'button', title: '关闭', 'aria-label': '关闭', autoFocus: true, onClick: closePanel }, '✕')),
+        h('div', { className: 'dce-body', ref: bodyRef }, body),
+        h('div', { className: 'dce-foot' },
+          h('button', { className: 'dce-btn dce-btn-primary', type: 'button', onClick: openChat, disabled: !request }, '追问这条'),
+          h('button', {
+            className: 'dce-btn', type: 'button',
+            onClick: function () { runExplain() },
+            disabled: !request || status === 'loading',
+          }, status === 'loading' ? '生成中…' : '重新生成'),
+          h('div', { className: 'dce-spacer' }),
+          h('button', {
+            className: 'dce-btn dce-btn-ghost', type: 'button',
+            onClick: function () {
+              saveConfig({ presentation: st.config.presentation === 'modal' ? 'drawer' : 'modal' })
+            },
+          }, st.config.presentation === 'modal' ? '改成侧栏' : '改成弹窗')))
+
+      const surface = st.config.presentation === 'modal'
+        ? h('div', {
+          className: 'dce-backdrop', key: 'modal',
+          onMouseDown: function (event) { if (event.target === event.currentTarget) closePanel() },
+        }, h('div', { className: 'dce-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': '确认解释' }, panel))
+        : h('div', { className: 'dce-drawer', key: 'drawer', role: 'dialog', 'aria-modal': 'false', 'aria-label': '确认解释' }, panel)
+
+      return h(React.Fragment, null,
+        st.open ? surface : null,
+        st.chat.open ? h(FloatChat, { key: 'chat' }) : null)
+    }
+
+    function FloatChat() {
+      const st = useStore()
+      const chat = st.chat
+      const [draft, setDraft] = React.useState('')
+      const [pos, setPos] = React.useState(null)
+      const [drag, setDrag] = React.useState(null)
+      const surface = React.useRef(null)
+      const scroller = React.useRef(null)
+
+      React.useEffect(function () {
+        if (!drag) return undefined
+        function move(event) {
+          setPos({
+            left: Math.max(4, drag.left + event.clientX - drag.x),
+            top: Math.max(4, drag.top + event.clientY - drag.y),
+          })
+        }
+        function up() { setDrag(null) }
+        window.addEventListener('pointermove', move)
+        window.addEventListener('pointerup', up)
+        return function () {
+          window.removeEventListener('pointermove', move)
+          window.removeEventListener('pointerup', up)
+        }
+      }, [drag])
+
+      React.useEffect(function () {
+        const node = scroller.current
+        if (node) node.scrollTop = node.scrollHeight
+      }, [chat.messages.length, chat.sending])
+
+      function startDrag(event) {
+        if (event.button !== 0 || !surface.current) return
+        const rect = surface.current.getBoundingClientRect()
+        setPos({ left: rect.left, top: rect.top })
+        setDrag({ x: event.clientX, y: event.clientY, left: rect.left, top: rect.top })
+      }
+
+      function submit() {
+        const text = draft.trim()
+        if (text === '') return
+        setDraft('')
+        sendChat(text)
+      }
+
+      const docked = st.open && st.config.presentation === 'drawer'
+      const style = pos === null
+        ? { right: docked ? '464px' : '24px' }
+        : { left: pos.left + 'px', top: pos.top + 'px', right: 'auto', bottom: 'auto' }
+      return h('div', { className: 'dce-float', ref: surface, style: style, role: 'dialog', 'aria-label': '追问这条确认' },
+        h('div', { className: 'dce-float-head', onPointerDown: startDrag, style: { touchAction: 'none' } },
+          h('span', { style: { color: T.brand, fontSize: 12 } }, '💬'),
+          h('div', { className: 'dce-float-title' }, '追问 · 这条确认'),
+          h('button', { className: 'dce-icon-btn', type: 'button', title: '关闭', 'aria-label': '关闭追问窗', onClick: closeChat }, '✕')),
+        h('div', { className: 'dce-float-body', ref: scroller },
+          chat.messages.length === 0
+            ? h('div', { className: 'dce-empty' },
+              '针对刚才这条确认继续问。比如：',
+              h('div', { style: { marginTop: 4 } }, '· 它会不会删掉我的文件？'),
+              h('div', null, '· 如果我拒绝，任务还能继续吗？'),
+              h('div', null, '· 这个权限以后还会再要吗？'))
+            : chat.messages.map(function (message, index) {
+              return h('div', {
+                key: index,
+                className: 'dce-msg ' + (message.role === 'user' ? 'dce-msg-user' : 'dce-msg-assistant'),
+              }, message.content)
+            }),
+          chat.sending ? h('div', { className: 'dce-loading', style: { padding: '4px 2px' } }, h('span', { className: 'dce-spinner' }), '正在回答…') : null,
+          chat.error ? h('div', { className: 'dce-error' }, chat.error) : null),
+        h('div', { className: 'dce-float-foot' },
+          h('textarea', {
+            className: 'dce-input', value: draft, rows: 1, placeholder: '追问这条判断…（Enter 发送）',
+            onInput: function (event) { setDraft(event.target.value) },
+            onKeyDown: function (event) {
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                submit()
+              }
+            },
+          }),
+          h('button', { className: 'dce-btn dce-btn-primary', type: 'button', onClick: submit, disabled: chat.sending || draft.trim() === '' }, '发送')))
+    }
+
+    function Probe(props) {
+      const sessionId = props.sessionId
+      const pending = props.useSessionStatus
+        ? props.useSessionStatus(function (map) {
+          return map && map.get(sessionId) ? map.get(sessionId).pendingInteraction : undefined
+        })
+        : undefined
+      const key = pending && pending.key ? String(pending.key) : ''
+
+      React.useEffect(function () {
+        setPending(pending || null)
+        if (!pending || !state.config.injectButton) {
+          setInjected(false)
+          return undefined
+        }
+        return startInjector(pending, function (cardText) { openPanel(cardText) })
+      }, [key, state.config.injectButton])
+
+      const st = useStore()
+      if (!pending) return null
+      if (st.injected) return null
+      return h('button', {
+        type: 'button',
+        className: 'dce-pill dce-header-btn',
+        title: '用大白话解释这条确认',
+        style: { marginLeft: 6 },
+        onClick: function () { openPanel('') },
+      }, '✦ 解释')
+    }
+
+    function SettingsSection() {
+      const st = useStore()
+      const config = st.config
+      return h('div', { className: 'dce-settings' },
+        h('h2', null, '确认解释'),
+        h('p', null, '把权限审批和选择确认翻译成大白话：会做什么、影响什么、有什么风险、建议放行还是拒绝。解释只供参考，按钮仍由你自己点。'),
+        h(Row, { title: '展示方式', hint: '右侧抽屉不挡输入框；居中弹窗适合仔细读长解释。' },
+          h(Segmented, {
+            value: config.presentation,
+            options: [['drawer', '右侧抽屉'], ['modal', '居中弹窗']],
+            onChange: function (value) { saveConfig({ presentation: value }) },
+          })),
+        h(Row, { title: '打开时自动解释', hint: '关闭后先显示「生成解释」，点一下才调用模型，更省额度。' },
+          h(Segmented, {
+            value: config.autoExplain ? 'on' : 'off',
+            options: [['on', '开'], ['off', '关']],
+            onChange: function (value) { saveConfig({ autoExplain: value === 'on' }) },
+          })),
+        h(Row, { title: '在确认卡片上显示「解释」', hint: '关闭后入口移到会话标题栏，卡片保持原样。' },
+          h(Segmented, {
+            value: config.injectButton ? 'on' : 'off',
+            options: [['on', '开'], ['off', '关']],
+            onChange: function (value) { saveConfig({ injectButton: value === 'on' }) },
+          })),
+        h(Row, { title: '同时打开追问小窗', hint: '打开解释面板时，顺带展开右下角的独立聊天窗。' },
+          h(Segmented, {
+            value: config.miniWindow ? 'on' : 'off',
+            options: [['on', '开'], ['off', '关']],
+            onChange: function (value) { saveConfig({ miniWindow: value === 'on' }) },
+          })),
+        h(Row, { title: '解释详细度', hint: '简明更快；标准会列出具体动作与允许/拒绝后果。' },
+          h(Segmented, {
+            value: config.detail,
+            options: [['brief', '简明'], ['standard', '标准']],
+            onChange: function (value) { saveConfig({ detail: value }) },
+          })),
+        h('div', { className: 'dce-note' },
+          '配置保存在 ~/.dsh/confirm-explain/config.json。模型沿用 DSH 当前默认模型；卡片原文只在本次调用中发送，不落盘。' + (st.configReady ? '' : '（正在读取配置…）')))
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Registration                                                      */
+    /* ---------------------------------------------------------------- */
+
+    return {
+      inject: ['slots'],
+      apply(ctx) {
+        try {
+          injectStyle()
+          loadConfig()
+          ctx.slots.inject('shell.overlay', function () {
+            return ctx.slots.register({ name: 'shell.overlay', id: 'confirm-explain-panel', order: 50 }, Panel)
+          })
+          ctx.slots.inject('conversation.session.header.actions', function () {
+            return ctx.slots.register({ name: 'conversation.session.header.actions', id: 'confirm-explain-probe', order: 80 }, Probe)
+          })
+          ctx.slots.inject('settings.section', function () {
+            return ctx.slots.register({ name: 'settings.section', id: 'confirm-explain', order: 120, label: '确认解释' }, SettingsSection)
+          })
+        } catch (error) {
+          console.error('[dsh-confirm-explain] 注册失败', error)
+        }
+      },
+    }
+  },
+})

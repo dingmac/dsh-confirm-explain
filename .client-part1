@@ -1,0 +1,492 @@
+/**
+ * dsh-confirm-explain — browser half.
+ *
+ * One lazy-CJS module: only 'react' is required. It renders through the Host's
+ * slot system (shell.overlay, settings.section) and augments the existing
+ * approval / question card with one small Explain pill.
+ *
+ * Surfaces:
+ *   card      data-approval-key / data-question-key elements — injected pill
+ *   overlay   shell.overlay — right drawer or centered modal + floating chat
+ *   settings  settings.section — presentation and behaviour preferences
+ *
+ * The card pill is a deliberate DOM augmentation: upstream exposes no
+ * additive action slot on the approval card, and replacing the composer chain
+ * would fork the approval lifecycle. The injector is idempotent, re-inserts
+ * after React re-renders, and removes itself when the request settles.
+ */
+window.__ModuleLoader__.load({
+  id: '@local/dsh-confirm-explain',
+  factory(require) {
+    const React = require('react')
+    const h = React.createElement
+
+    const VERSION = '1.0.0'
+    const BASE = '/_dsh/confirm-explain'
+    const STYLE_ID = 'dce-style'
+    const BTN_ATTR = 'data-dce-explain-btn'
+
+    const T = {
+      base: 'var(--dsw-alias-bg-base, #111)',
+      layer1: 'var(--dsw-alias-bg-layer-1, #191919)',
+      layer2: 'var(--dsw-alias-bg-layer-2, #232323)',
+      layer3: 'var(--dsw-alias-bg-layer-3, #2b2b2b)',
+      border1: 'var(--dsw-alias-border-l1, #333)',
+      border2: 'var(--dsw-alias-border-l2, #444)',
+      text: 'var(--dsw-alias-label-primary, #eee)',
+      muted: 'var(--dsw-alias-label-secondary, #9a9a9a)',
+      faint: 'var(--dsw-alias-label-tertiary, #6f6f6f)',
+      brand: 'var(--dsw-alias-brand-primary, #7c9cff)',
+      ok: 'var(--dsw-alias-state-success-primary, #22c55e)',
+      warn: 'var(--dsw-alias-state-warn-primary, #f59e0b)',
+      error: 'var(--dsw-alias-state-error-primary, #ef4444)',
+    }
+
+    const DEFAULT_CONFIG = {
+      presentation: 'drawer',
+      autoExplain: true,
+      injectButton: true,
+      miniWindow: false,
+      detail: 'standard',
+    }
+
+    const KIND_LABEL = {
+      approval: '权限审批',
+      question: '需要你选择',
+      'plan-review': '计划评审',
+    }
+
+    const DECISION_LABEL = {
+      allow: '建议放行',
+      reject: '建议拒绝',
+      careful: '建议先确认',
+    }
+
+    const DECISION_COLOR = {
+      allow: T.ok,
+      reject: T.error,
+      careful: T.warn,
+    }
+
+    const RISK_LABEL = { low: '低风险', medium: '中等风险', high: '高风险', unknown: '未说明' }
+    const RISK_COLOR = { low: T.ok, medium: T.warn, high: T.error, unknown: T.muted }
+
+    const CSS = `
+.dce-pill{font:inherit;font-size:12px;line-height:1;display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 9px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2,#444);background:var(--dsw-alias-bg-layer-2,#232323);color:var(--dsw-alias-label-secondary,#b9b9b9);cursor:pointer;white-space:nowrap;transition:color .15s,border-color .15s,background .15s;pointer-events:auto}
+.dce-pill:hover{color:var(--dsw-alias-label-primary,#eee);border-color:var(--dsw-alias-brand-primary,#7c9cff);background:var(--dsw-alias-bg-layer-3,#2b2b2b)}
+.dce-pill:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#7c9cff);outline-offset:1px}
+.dce-card-btn{position:absolute;top:10px;right:10px;z-index:6;box-shadow:0 1px 6px rgba(0,0,0,.25)}
+.dce-header-btn{margin-left:4px}
+.dce-drawer{position:fixed;top:0;right:0;height:100dvh;width:min(440px,94vw);background:var(--dsw-alias-bg-layer-1,#191919);border-left:1px solid var(--dsw-alias-border-l1,#333);box-shadow:-18px 0 48px rgba(0,0,0,.38);z-index:2147483000;display:flex;flex-direction:column;animation:dce-slide .18s ease-out}
+@keyframes dce-slide{from{transform:translateX(24px);opacity:.4}to{transform:none;opacity:1}}
+.dce-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.46);z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:22px}
+.dce-modal{width:min(700px,94vw);max-height:86vh;background:var(--dsw-alias-bg-layer-1,#191919);border:1px solid var(--dsw-alias-border-l1,#333);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.5);display:flex;flex-direction:column;overflow:hidden;animation:dce-pop .16s ease-out}
+@keyframes dce-pop{from{transform:translateY(8px) scale(.99);opacity:.5}to{transform:none;opacity:1}}
+.dce-panel{display:flex;flex-direction:column;min-height:0;flex:1;color:var(--dsw-alias-label-primary,#eee)}
+.dce-head{display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--dsw-alias-border-l1,#333);flex:none}
+.dce-title{font-size:14px;font-weight:600;letter-spacing:.2px}
+.dce-kind{font-size:11px;padding:2px 7px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2,#444);color:var(--dsw-alias-label-secondary,#aaa);white-space:nowrap}
+.dce-spacer{flex:1}
+.dce-icon-btn{width:26px;height:26px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary,#aaa);cursor:pointer;font-size:15px;line-height:1;display:inline-flex;align-items:center;justify-content:center;pointer-events:auto}
+.dce-icon-btn:hover{background:var(--dsw-alias-bg-layer-2,#232323);color:var(--dsw-alias-label-primary,#eee);border-color:var(--dsw-alias-border-l1,#333)}
+.dce-body{flex:1;min-height:0;overflow:auto;padding:14px 16px 18px;display:flex;flex-direction:column;gap:12px}
+.dce-foot{flex:none;display:flex;gap:8px;padding:10px 16px;border-top:1px solid var(--dsw-alias-border-l1,#333);background:var(--dsw-alias-bg-layer-1,#191919)}
+.dce-btn{font:inherit;font-size:12px;height:28px;padding:0 11px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,#444);background:transparent;color:var(--dsw-alias-label-primary,#eee);cursor:pointer;display:inline-flex;align-items:center;gap:5px;pointer-events:auto}
+.dce-btn:hover{background:var(--dsw-alias-bg-layer-2,#232323)}
+.dce-btn[disabled]{opacity:.5;cursor:not-allowed}
+.dce-btn-primary{background:var(--dsw-alias-brand-primary,#7c9cff);border-color:transparent;color:#fff}
+.dce-btn-primary:hover{filter:brightness(1.06);background:var(--dsw-alias-brand-primary,#7c9cff)}
+.dce-btn-ghost{border-color:transparent;color:var(--dsw-alias-label-secondary,#aaa)}
+.dce-sec{border:1px solid var(--dsw-alias-border-l1,#333);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#232323);padding:10px 12px}
+.dce-sec-title{font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--dsw-alias-label-tertiary,#777);margin-bottom:6px}
+.dce-lead{font-size:14px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.dce-plain{font-size:13px;line-height:1.7;color:var(--dsw-alias-label-secondary,#c9c9c9);white-space:pre-wrap;word-break:break-word}
+.dce-list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+.dce-list li{font-size:13px;line-height:1.6;word-break:break-word}
+.dce-risk{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
+.dce-dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+.dce-rec{border-radius:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1,#333);display:flex;flex-direction:column;gap:4px}
+.dce-rec b{font-size:13px}
+.dce-rec span{font-size:13px;line-height:1.6;color:var(--dsw-alias-label-secondary,#c9c9c9);white-space:pre-wrap}
+.dce-cols{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:560px){.dce-cols{grid-template-columns:1fr}}
+.dce-col{font-size:12px;line-height:1.65;color:var(--dsw-alias-label-secondary,#c9c9c9);white-space:pre-wrap;word-break:break-word}
+.dce-source{border:1px dashed var(--dsw-alias-border-l2,#444);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.dce-source summary{cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary,#aaa);pointer-events:auto}
+.dce-source-text{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary,#b5b5b5);max-height:220px;overflow:auto;margin:0}
+.dce-loading{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--dsw-alias-label-secondary,#bbb);padding:18px 2px}
+.dce-spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(124,156,255,.25);border-top-color:var(--dsw-alias-brand-primary,#7c9cff);animation:dce-spin .8s linear infinite;flex:none}
+@keyframes dce-spin{to{transform:rotate(360deg)}}
+.dce-error{border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.08);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.6;color:#f2b8b5;display:flex;flex-direction:column;gap:8px}
+.dce-empty{font-size:12.5px;line-height:1.7;color:var(--dsw-alias-label-tertiary,#888);padding:8px 2px}
+.dce-banner{font-size:12px;line-height:1.6;padding:7px 10px;border-radius:8px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:#f0c88a}
+.dce-float{position:fixed;right:24px;bottom:24px;width:380px;height:440px;min-width:300px;min-height:320px;max-width:min(560px,94vw);max-height:80vh;resize:both;overflow:hidden;background:var(--dsw-alias-bg-layer-1,#191919);border:1px solid var(--dsw-alias-border-l2,#444);border-radius:14px;box-shadow:0 18px 54px rgba(0,0,0,.5);z-index:2147483001;display:flex;flex-direction:column;pointer-events:auto}
+.dce-float-head{display:flex;align-items:center;gap:8px;padding:9px 10px 9px 12px;border-bottom:1px solid var(--dsw-alias-border-l1,#333);cursor:move;user-select:none;flex:none}
+.dce-float-title{font-size:12.5px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dce-float-body{flex:1;min-height:0;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.dce-msg{max-width:88%;font-size:12.5px;line-height:1.65;padding:7px 10px;border-radius:10px;white-space:pre-wrap;word-break:break-word}
+.dce-msg-user{align-self:flex-end;background:var(--dsw-alias-brand-primary,#7c9cff);color:#fff;border-bottom-right-radius:3px}
+.dce-msg-assistant{align-self:flex-start;background:var(--dsw-alias-bg-layer-2,#232323);border:1px solid var(--dsw-alias-border-l1,#333);border-bottom-left-radius:3px}
+.dce-float-foot{flex:none;display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1,#333)}
+.dce-input{flex:1;font:inherit;font-size:12.5px;line-height:1.5;min-height:30px;max-height:90px;resize:none;padding:6px 9px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,#444);background:var(--dsw-alias-bg-layer-2,#232323);color:var(--dsw-alias-label-primary,#eee);outline:none;pointer-events:auto}
+.dce-input:focus{border-color:var(--dsw-alias-brand-primary,#7c9cff)}
+.dce-settings{display:flex;flex-direction:column;gap:14px;max-width:620px;color:var(--dsw-alias-label-primary,#eee);padding:4px 2px 24px}
+.dce-settings h2{font-size:16px;margin:0}
+.dce-settings p{margin:0;font-size:12.5px;line-height:1.7;color:var(--dsw-alias-label-secondary,#aaa)}
+.dce-row{display:flex;align-items:flex-start;gap:16px;padding:12px 0;border-top:1px solid var(--dsw-alias-border-l1,#333)}
+.dce-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.dce-row-title{font-size:13px;font-weight:600}
+.dce-row-hint{font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary,#888)}
+.dce-seg{display:inline-flex;padding:2px;border-radius:9px;border:1px solid var(--dsw-alias-border-l2,#444);background:var(--dsw-alias-bg-layer-2,#232323);flex:none}
+.dce-seg button{font:inherit;font-size:12px;border:0;background:transparent;color:var(--dsw-alias-label-secondary,#aaa);padding:5px 10px;border-radius:7px;cursor:pointer;pointer-events:auto}
+.dce-seg button[data-on="1"]{background:var(--dsw-alias-bg-layer-3,#2e2e2e);color:var(--dsw-alias-label-primary,#eee);box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.dce-note{font-size:11.5px;color:var(--dsw-alias-label-tertiary,#777)}
+`
+
+    /* ---------------------------------------------------------------- */
+    /* Store                                                             */
+    /* ---------------------------------------------------------------- */
+
+    let state = {
+      config: Object.assign({}, DEFAULT_CONFIG),
+      configReady: false,
+      pending: null,
+      open: false,
+      resolved: false,
+      request: null,
+      explanation: { key: null, status: 'idle', data: null, error: null },
+      chat: { open: false, key: null, messages: [], sending: false, error: null },
+      injected: false,
+      toast: null,
+    }
+    const listeners = new Set()
+    const getState = () => state
+
+    function update(patch) {
+      state = Object.assign({}, state, patch)
+      for (const listener of listeners) {
+        try { listener() } catch { /* one broken subscriber must not stop the rest */ }
+      }
+    }
+
+    function subscribe(listener) {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    }
+
+    /** Whole-store subscription: the state object is replaced on every change. */
+    function useStore() {
+      return React.useSyncExternalStore(subscribe, getState)
+    }
+
+    function setInjected(value) {
+      if (state.injected !== value) update({ injected: value })
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Host API                                                          */
+    /* ---------------------------------------------------------------- */
+
+    async function api(path, body) {
+      const response = await fetch(BASE + path, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: body === undefined ? {} : { 'content-type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        credentials: 'same-origin',
+      })
+      let data = null
+      try { data = await response.json() } catch { data = null }
+      if (!response.ok) {
+        const message = data && typeof data.error === 'string' ? data.error : '请求失败（HTTP ' + response.status + '）'
+        throw new Error(message)
+      }
+      return data || {}
+    }
+
+    let configPromise = null
+    function loadConfig() {
+      if (configPromise !== null) return configPromise
+      configPromise = api('/config').then((data) => {
+        update({ config: Object.assign({}, DEFAULT_CONFIG, data.config || {}), configReady: true })
+      }).catch(() => {
+        update({ configReady: true })
+      })
+      return configPromise
+    }
+
+    function saveConfig(patch) {
+      update({ config: Object.assign({}, state.config, patch) })
+      api('/config', patch).then((data) => {
+        if (data && data.config) update({ config: Object.assign({}, DEFAULT_CONFIG, data.config) })
+      }).catch((error) => {
+        update({ toast: '设置保存失败：' + error.message })
+        setTimeout(() => { if (state.toast) update({ toast: null }) }, 4000)
+      })
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Pending request                                                   */
+    /* ---------------------------------------------------------------- */
+
+    function reasonOf(pending) {
+      const display = pending && pending.displayReason
+      if (display && typeof display === 'object') {
+        const preferred = display.zh || display['zh-CN'] || display.en
+        if (typeof preferred === 'string' && preferred !== '') return preferred
+        for (const value of Object.values(display)) if (typeof value === 'string' && value !== '') return value
+      }
+      return pending && typeof pending.reason === 'string' ? pending.reason : ''
+    }
+
+    function questionsOf(pending) {
+      const list = pending && Array.isArray(pending.questions) ? pending.questions : []
+      return list.slice(0, 8).map((question) => ({
+        header: typeof question.header === 'string' ? question.header : '',
+        question: typeof question.question === 'string' ? question.question : '',
+        detail: typeof question.detail === 'string' ? question.detail : '',
+        multiSelect: question.multiSelect === true,
+        options: Array.isArray(question.options)
+          ? question.options.slice(0, 12).map((option) => ({
+            label: String(option && option.label !== undefined ? option.label : ''),
+            description: String(option && option.description !== undefined ? option.description : ''),
+          }))
+          : [],
+      }))
+    }
+
+    function toRequest(pending, cardText) {
+      const kind = pending && (pending.kind === 'question' || pending.kind === 'plan-review') ? pending.kind : 'approval'
+      return {
+        key: pending && pending.key ? String(pending.key) : '',
+        kind,
+        sessionId: pending && pending.sessionId !== undefined ? String(pending.sessionId) : '',
+        toolName: pending && typeof pending.toolName === 'string' ? pending.toolName : '',
+        reason: reasonOf(pending),
+        questions: questionsOf(pending),
+        cardText: typeof cardText === 'string' ? cardText.slice(0, 12000) : '',
+      }
+    }
+
+    function setPending(pending) {
+      const previous = state.pending
+      if (previous && pending && previous.key === pending.key) return
+      if (!pending) {
+        update({ pending: null, resolved: state.open ? true : state.resolved })
+        return
+      }
+      const sameKey = state.explanation.key === pending.key
+      const request = toRequest(pending, sameKey && state.request ? state.request.cardText : '')
+      update({
+        pending,
+        resolved: false,
+        request,
+        open: sameKey ? state.open : false,
+        explanation: sameKey ? state.explanation : { key: pending.key, status: 'idle', data: null, error: null },
+        chat: sameKey ? state.chat : { open: false, key: pending.key, messages: [], sending: false, error: null },
+      })
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Card text + injection                                             */
+    /* ---------------------------------------------------------------- */
+
+    function cardTextOf(root) {
+      try {
+        const clone = root.cloneNode(true)
+        const own = clone.querySelectorAll ? clone.querySelectorAll('[' + BTN_ATTR + ']') : []
+        for (const node of own) node.remove()
+        const content = clone.textContent || ''
+        return content.replace(/\s+/g, ' ').trim().slice(0, 12000)
+      } catch {
+        return ''
+      }
+    }
+
+    function findCard(pending) {
+      const attribute = pending.kind === 'approval' ? 'data-approval-key' : 'data-question-key'
+      const wanted = String(pending.key || '')
+      const nodes = document.querySelectorAll('[' + attribute + ']')
+      for (const node of nodes) {
+        if (node.getAttribute(attribute) === wanted) return node
+      }
+      return null
+    }
+
+    function makeButton(onClick) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'dce-pill'
+      button.setAttribute(BTN_ATTR, '1')
+      button.setAttribute('aria-label', '用大白话解释这条确认')
+      button.title = '用大白话解释这条确认'
+      button.textContent = '✦ 解释'
+      button.style.pointerEvents = 'auto'
+      button.addEventListener('mousedown', (event) => { event.stopPropagation() })
+      // Keep every key inside the pill: an Escape bubbling to the approval card
+      // would reject the request the user is trying to understand.
+      button.addEventListener('keydown', (event) => { event.stopPropagation() })
+      button.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        // Move focus out of the card before the drawer mounts, so Escape closes
+        // the drawer instead of reaching the approval card's Escape handler.
+        button.blur()
+        onClick()
+      })
+      return button
+    }
+
+    function placeOnApproval(root, button) {
+      button.classList.add('dce-card-btn')
+      // The slot root is a full-width wrapper; the visible card is its first child.
+      // Anchor to the card so the pill sits on the card's corner, not the page edge.
+      const card = root.firstElementChild || root
+      const computed = window.getComputedStyle ? window.getComputedStyle(card) : null
+      if (computed && computed.position === 'static') card.style.position = 'relative'
+      card.appendChild(button)
+    }
+
+    function placeOnQuestion(root, button) {
+      const header = root.querySelector('header')
+      if (!header) {
+        button.classList.add('dce-card-btn')
+        const computed = window.getComputedStyle ? window.getComputedStyle(root) : null
+        if (computed && computed.position === 'static') root.style.position = 'relative'
+        root.appendChild(button)
+        return
+      }
+      button.style.flex = 'none'
+      header.appendChild(button)
+    }
+
+    /**
+     * Keep one pill on the live card until the request settles.
+     * @param pending the interaction currently waiting for the user
+     * @param onOpen receives the card's visible text
+     * @returns teardown that removes the pill and every observer
+     */
+    function startInjector(pending, onOpen) {
+      let stopped = false
+      let button = null
+      let queued = false
+
+      const ensure = () => {
+        if (stopped) return
+        if (!state.pending || state.pending.key !== pending.key) return
+        const root = findCard(pending)
+        if (!root) {
+          setInjected(false)
+          return
+        }
+        if (root.querySelector('[' + BTN_ATTR + ']')) {
+          setInjected(true)
+          return
+        }
+        button = makeButton(() => onOpen(cardTextOf(root)))
+        if (pending.kind === 'approval') placeOnApproval(root, button)
+        else placeOnQuestion(root, button)
+        setInjected(true)
+      }
+
+      const schedule = () => {
+        if (queued || stopped) return
+        queued = true
+        const run = () => { queued = false; ensure() }
+        if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(run)
+        else setTimeout(run, 30)
+      }
+
+      const observer = new MutationObserver(schedule)
+      observer.observe(document.body, { childList: true, subtree: true })
+      ensure()
+      const timer = setInterval(ensure, 900)
+
+      return () => {
+        stopped = true
+        observer.disconnect()
+        clearInterval(timer)
+        if (button && button.parentNode) button.parentNode.removeChild(button)
+        button = null
+        setInjected(false)
+      }
+    }
+
+    function injectStyle() {
+      if (document.getElementById(STYLE_ID)) return
+      const style = document.createElement('style')
+      style.id = STYLE_ID
+      style.textContent = CSS
+      document.head.appendChild(style)
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Actions                                                           */
+    /* ---------------------------------------------------------------- */
+
+    function openPanel(cardText) {
+      const pending = state.pending
+      if (!pending) return
+      const request = toRequest(pending, cardText || '')
+      const sameKey = state.explanation.key === pending.key
+      const chat = sameKey
+        ? state.chat
+        : { open: false, key: pending.key, messages: [], sending: false, error: null }
+      if (state.config.miniWindow && !chat.open) chat.open = true
+      update({ open: true, resolved: false, request, chat })
+      const idle = !sameKey || state.explanation.status === 'idle'
+      const failed = state.explanation.status === 'error'
+      if (failed || (idle && state.config.autoExplain)) runExplain(request)
+    }
+
+    function runExplain(request) {
+      const target = request || state.request
+      if (!target) return
+      const key = target.key
+      update({ explanation: { key, status: 'loading', data: null, error: null } })
+      api('/explain', { request: target, detail: state.config.detail }).then((data) => {
+        if (!state.request || state.request.key !== key) return
+        update({ explanation: { key, status: 'ready', data: data.explanation, error: null } })
+      }).catch((error) => {
+        if (!state.request || state.request.key !== key) return
+        update({ explanation: { key, status: 'error', data: null, error: error.message } })
+      })
+    }
+
+    function closePanel() {
+      update({ open: false })
+    }
+
+    function openChat() {
+      const request = state.request
+      if (!request) return
+      const same = state.chat.key === request.key
+      update({
+        chat: same
+          ? Object.assign({}, state.chat, { open: true })
+          : { open: true, key: request.key, messages: [], sending: false, error: null },
+      })
+    }
+
+    function closeChat() {
+      update({ chat: Object.assign({}, state.chat, { open: false }) })
+    }
+
+    function sendChat(question) {
+      const content = String(question || '').trim()
+      const request = state.request
+      if (content === '' || !request || state.chat.sending) return
+      const history = state.chat.messages
+      const messages = history.concat([{ role: 'user', content }])
+      update({ chat: Object.assign({}, state.chat, { messages, sending: true, error: null }) })
+      api('/chat', { request, history, question: content }).then((data) => {
+        update({
+          chat: Object.assign({}, state.chat, {
+            messages: state.chat.messages.concat([{ role: 'assistant', content: data.answer }]),
+            sending: false,
+          }),
+        })
+      }).catch((error) => {
+        update({ chat: Object.assign({}, state.chat, { sending: false, error: error.message }) })
+      })
+    }
+

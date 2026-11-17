@@ -1,0 +1,43 @@
+{
+  "name": "@local/dsh-confirm-explain",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "把 DSH 的权限审批 / 选择确认翻译成大白话：卡片上一个「解释」按钮，右侧抽屉或弹窗给出影响、风险与建议，并支持独立小窗追问。",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "icon.svg",
+    "tests",
+    "scripts"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

@@ -1,0 +1,15 @@
+# dsh-confirm-explain：常驻的「确认解释」宿主半边。
+#
+# 浏览器半边在确认卡片上注入一个「解释」按钮；点击后由本插件调用当前默认模型，
+# 把卡片原文翻译成大白话，并给出影响、风险与建议。设置与说明见 README.md。
+#
+# 可调参数（改这里，无需改代码）：
+#   dataDir   配置落盘目录（默认 ~/.dsh/confirm-explain）
+#   maxTokens 单次解释的输出上限（默认 1200）
+#   timeoutMs 单次模型调用超时毫秒（默认 90000）
+- insert:
+    - id: dsh-confirm-explain
+      name: '@local/dsh-confirm-explain'
+      config:
+        maxTokens: 1800
+        timeoutMs: 90000
